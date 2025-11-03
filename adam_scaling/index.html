@@ -1,0 +1,821 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Adam Optimizer Internal Mechanics Visualizer</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #f5f5f5;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+
+        .controls {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .control-group {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+
+        .control-item {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .control-item label {
+            font-size: 13px;
+            color: #555;
+            margin-bottom: 5px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .control-item input[type="range"] {
+            width: 100%;
+        }
+
+        .control-item .value {
+            font-weight: bold;
+            color: #007bff;
+            font-family: monospace;
+        }
+
+        .buttons {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin-top: 15px;
+        }
+
+        button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            background: #007bff;
+            color: white;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: background 0.2s;
+        }
+
+        button:hover {
+            background: #0056b3;
+        }
+
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        button.secondary {
+            background: #6c757d;
+        }
+
+        button.secondary:hover {
+            background: #545b62;
+        }
+
+        .parameters-grid {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            margin-bottom: 20px;
+            max-width: 1100px;
+            margin: 0 auto;
+        }
+
+        .parameter-card {
+            background: white;
+            border-radius: 8px;
+            padding: 15px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .parameter-card h3 {
+            font-size: 16px;
+            color: #333;
+            margin-bottom: 5px;
+        }
+
+        .parameter-card .description {
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 15px;
+        }
+
+        .card-main {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 15px;
+            align-items: stretch;
+        }
+
+        .chart-section {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .ratio-section {
+            flex: 0 0 240px;
+            display: flex;
+            align-items: center;
+        }
+
+        .ratio-display {
+            background: #374151;
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+            width: 100%;
+        }
+
+        .ratio-display .ratio-label {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            opacity: 0.9;
+            margin-bottom: 5px;
+        }
+
+        .ratio-display .ratio-value {
+            font-size: 38px;
+            font-weight: bold;
+            font-family: monospace;
+            margin: 10px 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .ratio-display .ratio-value.updating {
+            opacity: 0.6;
+        }
+
+        .ratio-display .ratio-formula {
+            font-size: 13px;
+            opacity: 0.9;
+            margin-top: 5px;
+        }
+
+        .ratio-display .ratio-explanation {
+            font-size: 10px;
+            opacity: 0.85;
+            margin-top: 8px;
+            font-style: italic;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 220px;
+        }
+
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
+            font-size: 11px;
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+        }
+
+        .metric {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .metric-label {
+            color: #666;
+            font-weight: 500;
+        }
+
+        .metric-value {
+            font-family: monospace;
+            font-weight: bold;
+            color: #333;
+            font-size: 12px;
+            transition: opacity 0.3s ease, transform 0.2s ease;
+        }
+
+        .metric-value.updating {
+            opacity: 0.6;
+            transform: translateX(2px);
+        }
+
+        .equation {
+            background: #fff3cd;
+            padding: 10px;
+            border-radius: 5px;
+            margin-top: 15px;
+            font-family: monospace;
+            font-size: 12px;
+            text-align: center;
+            border: 1px solid #ffc107;
+        }
+
+        .iteration-counter {
+            text-align: center;
+            font-size: 18px;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 15px;
+        }
+
+        /* Mobile responsiveness */
+        @media (max-width: 768px) {
+            .card-main {
+                flex-direction: column;
+            }
+
+            .ratio-section {
+                flex: 1;
+                width: 100%;
+            }
+
+            .chart-container {
+                height: 200px;
+            }
+
+            .control-group {
+                grid-template-columns: 1fr;
+            }
+
+            .parameters-grid {
+                max-width: 100%;
+            }
+
+            h1 {
+                font-size: 24px;
+            }
+
+            .subtitle {
+                font-size: 13px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Adam Optimizer: Internal Mechanics Visualizer</h1>
+        <p class="subtitle">See how Adam adapts learning rates based on different gradient patterns</p>
+
+        <div class="parameters-grid" id="parameters-grid">
+            <!-- Parameter cards will be inserted here -->
+        </div>
+
+        <div class="controls">
+            <div class="control-group">
+                <div class="control-item">
+                    <label>
+                        <span>Learning Rate (α)</span>
+                        <span class="value" id="alpha-value">0.01</span>
+                    </label>
+                    <input type="range" id="alpha" min="0.001" max="0.1" step="0.001" value="0.01">
+                </div>
+                <div class="control-item">
+                    <label>
+                        <span>Beta 1 (β₁) - Momentum Decay</span>
+                        <span class="value" id="beta1-value">0.9</span>
+                    </label>
+                    <input type="range" id="beta1" min="0.5" max="0.99" step="0.01" value="0.9">
+                </div>
+                <div class="control-item">
+                    <label>
+                        <span>Beta 2 (β₂) - Variance Decay</span>
+                        <span class="value" id="beta2-value">0.999</span>
+                    </label>
+                    <input type="range" id="beta2" min="0.9" max="0.9999" step="0.0001" value="0.999">
+                </div>
+                <div class="control-item">
+                    <label>
+                        <span>Epsilon (ε) - Stability Constant</span>
+                        <span class="value" id="epsilon-value">1e-8</span>
+                    </label>
+                    <input type="range" id="epsilon" min="1e-10" max="1e-6" step="1e-10" value="1e-8">
+                </div>
+                <div class="control-item">
+                    <label>
+                        <span>Animation Speed</span>
+                        <span class="value" id="speed-value">400ms</span>
+                    </label>
+                    <input type="range" id="speed" min="100" max="1000" step="50" value="400">
+                </div>
+            </div>
+            <div class="buttons">
+                <button id="play-btn">▶ Play</button>
+                <button id="pause-btn" disabled>⏸ Pause</button>
+                <button id="step-btn">⏭ Step</button>
+                <button id="reset-btn" class="secondary">↻ Reset</button>
+            </div>
+            <div class="iteration-counter">Iteration: <span id="iteration">0</span></div>
+        </div>
+    </div>
+
+    <script>
+        // Gradient pattern generators
+        const gradientPatterns = {
+            consistentDirection: {
+                name: "Consistent Direction",
+                description: "Gradients point in same direction with some noise",
+                generate: (t) => 0.9 + (Math.random() - 0.5) * 1.0
+            },
+            noisy: {
+                name: "Noisy Gradients",
+                description: "Random noise around zero",
+                generate: (t) => (Math.random() - 0.5) * 2.4
+            },
+            oscillating: {
+                name: "Oscillating Gradients",
+                description: "Smooth oscillation crossing zero",
+                generate: (t) => 1.2 * Math.sin(t * 0.2)
+            }
+        };
+
+        // Adam optimizer implementation
+        class AdamOptimizer {
+            constructor(alpha = 0.01, beta1 = 0.9, beta2 = 0.999, epsilon = 1e-8) {
+                this.alpha = alpha;
+                this.beta1 = beta1;
+                this.beta2 = beta2;
+                this.epsilon = epsilon;
+                this.reset();
+            }
+
+            reset() {
+                this.m = 0;  // First moment
+                this.v = 0;  // Second moment
+                this.t = 0;  // Time step
+                this.theta = 0;  // Parameter value
+            }
+
+            update(gradient) {
+                this.t += 1;
+
+                // Update biased first moment estimate
+                this.m = this.beta1 * this.m + (1 - this.beta1) * gradient;
+
+                // Update biased second moment estimate
+                this.v = this.beta2 * this.v + (1 - this.beta2) * gradient * gradient;
+
+                // Compute bias-corrected first moment
+                const m_hat = this.m / (1 - Math.pow(this.beta1, this.t));
+
+                // Compute bias-corrected second moment
+                const v_hat = this.v / (1 - Math.pow(this.beta2, this.t));
+
+                // Compute square root of v_hat
+                const sqrt_v_hat = Math.sqrt(v_hat) + this.epsilon;
+
+                // Compute the ratio (this is what scales the gradient)
+                const ratio = m_hat / sqrt_v_hat;
+
+                // Compute effective learning rate
+                const effective_lr = this.alpha / sqrt_v_hat;
+
+                // Update parameter
+                const update = this.alpha * ratio;
+                this.theta -= update;
+
+                return {
+                    gradient: gradient,
+                    m: this.m,
+                    v: this.v,
+                    m_hat: m_hat,
+                    v_hat: v_hat,
+                    sqrt_v_hat: sqrt_v_hat,
+                    ratio: ratio,
+                    effective_lr: effective_lr,
+                    update: update,
+                    theta: this.theta
+                };
+            }
+
+            updateHyperparameters(alpha, beta1, beta2, epsilon) {
+                this.alpha = alpha;
+                this.beta1 = beta1;
+                this.beta2 = beta2;
+                this.epsilon = epsilon;
+            }
+        }
+
+        // Global state
+        let iteration = 0;
+        let isPlaying = false;
+        let animationId = null;
+        let maxHistory = window.innerWidth < 768 ? 20 : 40;
+        const parameters = [];
+
+        // Update maxHistory on window resize
+        window.addEventListener('resize', () => {
+            const newMaxHistory = window.innerWidth < 768 ? 20 : 40;
+            if (newMaxHistory !== maxHistory) {
+                maxHistory = newMaxHistory;
+                // Trim existing history if needed
+                parameters.forEach(param => {
+                    Object.keys(param.history).forEach(key => {
+                        if (param.history[key].length > maxHistory) {
+                            param.history[key] = param.history[key].slice(-maxHistory);
+                        }
+                    });
+                });
+            }
+        });
+
+        // Create parameter visualizations
+        function createParameterCard(patternKey, pattern) {
+            const optimizer = new AdamOptimizer();
+            const history = {
+                gradients: [],
+                m_values: [],
+                v_values: [],
+                m_hat_values: [],
+                v_hat_values: [],
+                sqrt_v_hat_values: [],
+                ratio_values: [],
+                effective_lr: [],
+                theta_values: []
+            };
+
+            const card = document.createElement('div');
+            card.className = 'parameter-card';
+            card.innerHTML = `
+                <h3>${pattern.name}</h3>
+                <p class="description">${pattern.description}</p>
+
+                <div class="card-main">
+                    <div class="chart-section">
+                        <div class="chart-container">
+                            <canvas id="chart-${patternKey}"></canvas>
+                        </div>
+                    </div>
+                    <div class="ratio-section">
+                        <div class="ratio-display">
+                            <div class="ratio-label">Scaling Ratio</div>
+                            <div class="ratio-value" id="${patternKey}-ratio">0.00</div>
+                            <div class="ratio-formula">$\\hat{m}_t / \\sqrt{\\hat{v}_t}$</div>
+                            <div style="margin-top: 15px; font-size: 13px; line-height: 1.8;">
+                                <div style="color: rgb(54, 162, 235); margin: 5px 0;"><strong>$\\hat{m}_t$:</strong> <span id="${patternKey}-m-hat">0.00</span></div>
+                                <div style="color: rgb(255, 159, 64); margin: 5px 0;"><strong>$\\sqrt{\\hat{v}_t}$:</strong> <span id="${patternKey}-sqrt-v">0.00</span></div>
+                            </div>
+                            <span id="${patternKey}-gradient" style="display:none;">0.00</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            document.getElementById('parameters-grid').appendChild(card);
+
+            // Create chart
+            const ctx = document.getElementById(`chart-${patternKey}`).getContext('2d');
+            const chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        {
+                            label: 'Gradient',
+                            data: [],
+                            borderColor: 'rgba(60, 60, 60, 0.9)',
+                            backgroundColor: 'rgba(60, 60, 60, 0.9)',
+                            pointRadius: 2.5,
+                            pointHoverRadius: 3,
+                            showLine: false
+                        },
+                        {
+                            label: 'Momentum',
+                            data: [],
+                            borderColor: 'rgb(54, 162, 235)',
+                            backgroundColor: 'rgba(54, 162, 235, 0.1)',
+                            borderWidth: 2,
+                            pointRadius: 0,
+                            tension: 0.4
+                        },
+                        {
+                            label: 'Second Moment',
+                            data: [],
+                            borderColor: 'rgb(255, 159, 64)',
+                            backgroundColor: 'rgba(255, 159, 64, 0.1)',
+                            borderWidth: 2,
+                            pointRadius: 0,
+                            tension: 0.4
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: {
+                        duration: 200,
+                        easing: 'easeInOutQuad'
+                    },
+                    scales: {
+                        x: {
+                            display: true,
+                            title: {
+                                display: true,
+                                text: 'Time',
+                                font: { size: 11 }
+                            },
+                            ticks: {
+                                display: false
+                            },
+                            grid: {
+                                display: false
+                            }
+                        },
+                        y: {
+                            min: -2,
+                            max: 2,
+                            ticks: {
+                                font: { size: 10 },
+                                stepSize: 1,
+                                callback: function(value) {
+                                    // Only show -1, 0, 1 (hide -2 and 2)
+                                    if (value === -2 || value === 2) return '';
+                                    return value;
+                                }
+                            },
+                            grid: {
+                                color: (context) => {
+                                    // Make the zero line stand out
+                                    if (context.tick.value === 0) {
+                                        return 'rgba(0, 0, 0, 0.35)';
+                                    }
+                                    // Hide gridlines for -2 and 2
+                                    if (context.tick.value === -2 || context.tick.value === 2) {
+                                        return 'transparent';
+                                    }
+                                    return 'rgba(0, 0, 0, 0.1)';
+                                },
+                                lineWidth: (context) => {
+                                    if (context.tick.value === 0) {
+                                        return 1.5;
+                                    }
+                                    return 1;
+                                }
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            display: true,
+                            position: 'top',
+                            labels: {
+                                font: { size: 10 },
+                                boxWidth: 10,
+                                padding: 5
+                            }
+                        }
+                    }
+                },
+                plugins: [{
+                    afterDatasetsDraw: (chart) => {
+                        const ctx = chart.ctx;
+                        const meta = chart.getDatasetMeta(0); // gradient dataset
+
+                        if (!meta || !meta.data || meta.data.length === 0) return;
+
+                        // Get y-position of zero line
+                        const yScale = chart.scales.y;
+                        const zeroY = yScale.getPixelForValue(0);
+
+                        // Draw vertical line from zero to each gradient point
+                        ctx.save();
+                        ctx.strokeStyle = 'rgba(60, 60, 60, 0.3)';
+                        ctx.lineWidth = 1.5;
+
+                        meta.data.forEach((point) => {
+                            ctx.beginPath();
+                            ctx.moveTo(point.x, zeroY);
+                            ctx.lineTo(point.x, point.y);
+                            ctx.stroke();
+                        });
+
+                        ctx.restore();
+                    }
+                }]
+            });
+
+            return { optimizer, history, chart, patternKey, pattern };
+        }
+
+        // Initialize all parameters
+        function initializeParameters() {
+            document.getElementById('parameters-grid').innerHTML = '';
+            parameters.length = 0;
+
+            Object.entries(gradientPatterns).forEach(([key, pattern]) => {
+                parameters.push(createParameterCard(key, pattern));
+            });
+        }
+
+        // Update one step with 3-stage animation
+        async function step() {
+            iteration++;
+            document.getElementById('iteration').textContent = iteration;
+
+            const alpha = parseFloat(document.getElementById('alpha').value);
+            const beta1 = parseFloat(document.getElementById('beta1').value);
+            const beta2 = parseFloat(document.getElementById('beta2').value);
+            const epsilon = parseFloat(document.getElementById('epsilon').value);
+
+            // Collect results for all parameters
+            const results = [];
+            parameters.forEach(param => {
+                param.optimizer.updateHyperparameters(alpha, beta1, beta2, epsilon);
+                const gradient = param.pattern.generate(iteration);
+                const result = param.optimizer.update(gradient);
+
+                // Store history
+                param.history.gradients.push(result.gradient);
+                param.history.m_values.push(result.m);
+                param.history.v_values.push(result.v);
+                param.history.m_hat_values.push(result.m_hat);
+                param.history.v_hat_values.push(result.v_hat);
+                param.history.sqrt_v_hat_values.push(result.sqrt_v_hat);
+                param.history.ratio_values.push(result.ratio);
+                param.history.effective_lr.push(result.effective_lr);
+                param.history.theta_values.push(result.theta);
+
+                // Limit history length
+                if (param.history.gradients.length > maxHistory) {
+                    Object.keys(param.history).forEach(key => {
+                        param.history[key].shift();
+                    });
+                }
+
+                results.push({ param, result });
+            });
+
+            // STAGE 1: Update charts (triggers Chart.js animation ~200ms)
+            results.forEach(({ param }) => {
+                const labels = param.history.gradients.map((_, i) => i);
+                param.chart.data.labels = labels;
+                param.chart.data.datasets[0].data = param.history.gradients;
+                param.chart.data.datasets[1].data = param.history.m_hat_values;
+                param.chart.data.datasets[2].data = param.history.sqrt_v_hat_values;
+                param.chart.update();
+            });
+
+            // STAGE 2: Wait for chart animation to complete
+            await new Promise(resolve => setTimeout(resolve, 250));
+
+            // STAGE 3: Update metrics with CSS transitions
+            results.forEach(({ param, result }) => {
+                // Add updating class for transition effect
+                const ratioEl = document.getElementById(`${param.patternKey}-ratio`);
+                const metricEls = [
+                    document.getElementById(`${param.patternKey}-gradient`),
+                    document.getElementById(`${param.patternKey}-m-hat`),
+                    document.getElementById(`${param.patternKey}-sqrt-v`)
+                ];
+
+                ratioEl.classList.add('updating');
+                metricEls.forEach(el => el.classList.add('updating'));
+
+                // Update values with 2 decimal places
+                setTimeout(() => {
+                    ratioEl.textContent = result.ratio.toFixed(2);
+                    metricEls[0].textContent = result.gradient.toFixed(2);
+                    metricEls[1].textContent = result.m_hat.toFixed(2);
+                    metricEls[2].textContent = result.sqrt_v_hat.toFixed(2);
+
+                    // Remove updating class
+                    setTimeout(() => {
+                        ratioEl.classList.remove('updating');
+                        metricEls.forEach(el => el.classList.remove('updating'));
+                    }, 300);
+                }, 50);
+            });
+
+            // Wait for metrics transition to complete
+            await new Promise(resolve => setTimeout(resolve, 200));
+        }
+
+        // Animation loop
+        async function animate() {
+            if (!isPlaying) return;
+            await step();
+
+            // First 10 iterations: fast (100ms)
+            // After that: user's speed setting
+            const speed = iteration <= 10
+                ? 100
+                : parseInt(document.getElementById('speed').value);
+
+            animationId = setTimeout(() => requestAnimationFrame(animate), speed);
+        }
+
+        // Control handlers
+        document.getElementById('play-btn').addEventListener('click', () => {
+            isPlaying = true;
+            document.getElementById('play-btn').disabled = true;
+            document.getElementById('pause-btn').disabled = false;
+            animate();
+        });
+
+        document.getElementById('pause-btn').addEventListener('click', () => {
+            isPlaying = false;
+            document.getElementById('play-btn').disabled = false;
+            document.getElementById('pause-btn').disabled = true;
+            if (animationId) {
+                clearTimeout(animationId);
+                animationId = null;
+            }
+        });
+
+        document.getElementById('step-btn').addEventListener('click', () => {
+            step();
+        });
+
+        document.getElementById('reset-btn').addEventListener('click', () => {
+            isPlaying = false;
+            document.getElementById('play-btn').disabled = false;
+            document.getElementById('pause-btn').disabled = true;
+            if (animationId) {
+                clearTimeout(animationId);
+                animationId = null;
+            }
+            iteration = 0;
+            document.getElementById('iteration').textContent = '0';
+            initializeParameters();
+        });
+
+        // Slider value updates
+        const sliders = ['alpha', 'beta1', 'beta2', 'epsilon', 'speed'];
+        sliders.forEach(id => {
+            const slider = document.getElementById(id);
+            const valueDisplay = document.getElementById(`${id}-value`);
+            slider.addEventListener('input', () => {
+                const value = parseFloat(slider.value);
+                if (id === 'epsilon') {
+                    valueDisplay.textContent = value.toExponential(0);
+                } else if (id === 'beta2') {
+                    valueDisplay.textContent = value.toFixed(4);
+                } else if (id === 'speed') {
+                    valueDisplay.textContent = Math.round(value) + 'ms';
+                } else {
+                    valueDisplay.textContent = value.toFixed(3);
+                }
+            });
+        });
+
+        // Initialize on load
+        initializeParameters();
+
+        // Render LaTeX
+        renderMathInElement(document.body, {
+            delimiters: [
+                {left: '$$', right: '$$', display: true},
+                {left: '$', right: '$', display: false}
+            ]
+        });
+
+        // Auto-play on load
+        setTimeout(() => {
+            isPlaying = true;
+            document.getElementById('play-btn').disabled = true;
+            document.getElementById('pause-btn').disabled = false;
+            animate();
+        }, 500);
+    </script>
+</body>
+</html>
