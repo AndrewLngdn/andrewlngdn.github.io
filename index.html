@@ -1,0 +1,60 @@
+---
+layout: default
+title: Home
+---
+
+<style>
+    .project-list {
+        margin-top: 3rem;
+    }
+
+    .project-card {
+        background: #fff;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        transition: transform 0.2s, box-shadow 0.2s;
+    }
+
+    .project-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    }
+
+    .project-card h2 {
+        margin-top: 0;
+    }
+
+    .project-card .date {
+        opacity: 0.6;
+        font-size: 0.85rem;
+        margin-bottom: 0.5rem;
+    }
+
+    .project-card p {
+        margin-bottom: 1rem;
+    }
+
+    .project-card a.read-more {
+        font-weight: 500;
+    }
+</style>
+
+<h1>Andrew Langdon</h1>
+<p>Machine learning visualizations and explorations.</p>
+
+<div class="project-list">
+    <article class="project-card">
+        <div class="date">November 3, 2025</div>
+        <h2><a href="/adam_scaling/">Visualizing Adam's adaptive learning rates</a></h2>
+        <p>If you've trained a machine learning model in the past, there's a good chance you've optimized with Adam. A big reason for Adam's success is that it determines individual learning rates for each model parameter, making large updates when confident, and small updates when uncertain.</p>
+        <p>This interactive visualization shows how Adam adapts its step sizes in response to different gradient patterns.</p>
+        <a href="/adam_scaling/" class="read-more">View visualization →</a>
+    </article>
+</div>
+
+<footer style="margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #ddd;">
+    <p>If you want to see a visualization about something ML-related, contact me at <a href="mailto:andrewlngdn@gmail.com">andrewlngdn@gmail.com</a>.</p>
+</footer>

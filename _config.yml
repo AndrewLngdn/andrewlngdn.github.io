@@ -1,0 +1,13 @@
+title: Andrew Langdon
+description: Machine learning visualizations and explorations
+url: "https://andrewlngdn.github.io"
+
+# Build settings
+markdown: kramdown
+permalink: /:title/
+
+# Exclude from processing
+exclude:
+  - README.md
+  - CLAUDE.md
+  - .DS_Store
