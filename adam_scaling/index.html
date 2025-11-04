@@ -465,7 +465,7 @@
 
         <p>The first changes slowly, filtering out noise. "Uncertain" gradients that bounce around zero will average out near zero, while consistent gradients remain either positive or negative. The second captures gradient intensity. Dividing the average by this intensity gives a value typically between 0 and 1. Adam uses this scaling factor to attenuate the global learning rate for each individual parameter.</p>
 
-        <p>Instead of starting bottom-up with the full set of equations, let's analyze top-down looking at the full system behavior.</p>
+        <p>Instead of starting bottom-up with the full set of equations, let's analyze top-down by looking at the full system behavior.</p>
 
         <p>Here's the Adam parameter update rule:</p>
 
@@ -473,13 +473,13 @@
             $$\theta_{t+1} = \theta_t - \eta \frac{\hat{m}_t}{\sqrt{\hat{v}_t} + \epsilon}$$
         </p>
 
-        <p>$\hat{m}_t$ is the moving average of our gradients, and $\sqrt{\hat{v}_t}$ is the square root of our squared gradients. Taking the square root brings the denominator to the same scale as the numerator.</p>
+        <p>$\hat{m}_t$ is the moving average of our gradients, and $\sqrt{\hat{v}_t}$ is the square root of our squared gradients. Taking the square root normalizes the denominator to the same scale as the numerator.</p>
 
         <p>We will be focusing on that ratio, $\hat{m}_t / (\sqrt{\hat{v}_t} + \epsilon)$, which we will call the <strong>learning-rate scale</strong>. It determines how much of the global learning rate $\eta$ is effectively applied to each parameter.</p>
 
         <p>The complete update rule can be found in the Adam publication: <a href="https://arxiv.org/pdf/1412.6980" target="_blank">https://arxiv.org/pdf/1412.6980</a>.</p>
 
-        <p style="margin-top: 2rem;">We can simulate different gradient patterns to see how they change the effective learning rate. In the below visualizations, our gradients are represented by a lollipop icon, the moving average $\hat{m}_t$ is shown in blue, and $\sqrt{\hat{v}_t}$ is shown in orange.</p>
+        <p style="margin-top: 2rem;">We can simulate different gradient patterns to see how they change the effective learning rate. In the below visualizations, the gradients are represented by a lollipop icon, the moving average $\hat{m}_t$ is shown in blue, and $\sqrt{\hat{v}_t}$ is shown in orange.</p>
 
         <section class="viz-section">
             <h2>Consistent Direction</h2>
