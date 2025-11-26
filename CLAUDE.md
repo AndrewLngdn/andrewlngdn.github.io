@@ -66,6 +66,8 @@ Changes pushed to the `main` branch are automatically published to:
 
 No build step is required. Files are served as-is from the repository.
 
+**IMPORTANT**: Do not commit and push without explicit instructions from the user, as changes go live immediately.
+
 ## Adding New Visualizations
 
 When creating new interactive demos:

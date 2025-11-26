@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Sinusoidal Positional Embedding Heatmap</title>
+  <style>
+    body {
+      display: flex; flex-direction: column;
+      align-items: center; background: #0f172a;
+      color: #f8fafc; font-family: sans-serif;
+    }
+    canvas {
+      margin-top: 20px;
+      border-radius: 12px;
+      box-shadow: 0 0 20px rgba(0, 0, 0, 0.3);
+    }
+    h2 { margin-top: 30px; }
+  </style>
+</head>
+<body>
+  <h2>Sinusoidal Positional Embedding Heatmap</h2>
+  <canvas id="canvas" width="800" height="400"></canvas>
+
+  <script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+
+    const numPositions = 100;   // sequence length
+    const dModel = 32;          // embedding dimension
+    const scale = 10000;
+
+    // compute PE matrix
+    const PE = Array.from({ length: dModel }, (_, i) => {
+      const freq = Math.pow(scale, -2 * Math.floor(i / 2) / dModel);
+      return Array.from({ length: numPositions }, (_, pos) =>
+        (i % 2 === 0
+          ? Math.sin(pos * freq)
+          : Math.cos(pos * freq))
+      );
+    });
+
+    // normalize values to 0–1 range for coloring
+    const allValues = PE.flat();
+    const minVal = Math.min(...allValues);
+    const maxVal = Math.max(...allValues);
+
+    function getColor(value) {
+      const t = (value - minVal) / (maxVal - minVal);
+      const r = Math.floor(255 * t);
+      const b = Math.floor(255 * (1 - t));
+      return `rgb(${r}, 50, ${b})`;
+    }
+
+    // draw heatmap
+    const cellWidth = canvas.width / numPositions;
+    const cellHeight = canvas.height / dModel;
+
+    for (let i = 0; i < dModel; i++) {
+      for (let j = 0; j < numPositions; j++) {
+        ctx.fillStyle = getColor(PE[i][j]);
+        ctx.fillRect(j * cellWidth, i * cellHeight, cellWidth, cellHeight);
+      }
+    }
+
+    // axes labels
+    ctx.fillStyle = '#f8fafc';
+    ctx.font = '14px sans-serif';
+    ctx.fillText('Position →', canvas.width / 2 - 40, canvas.height - 10);
+    ctx.save();
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText('Embedding dimension →', -canvas.height / 2 - 60, 20);
+    ctx.restore();
+  </script>
+</body>
+</html>
