@@ -247,9 +247,9 @@ emit result</code></pre>
 
 <p>The base model correctly identifies the join key mismatch but can't determine the correct fix, and submits the unchanged code. The trained model uses the expected output, infers what the program was supposed to do, and fixes all four bugs in a single step.</p>
 
-<p>Interestingly, the SFT-only model (trained on GPT-5-mini expert trajectories) takes a more methodical approach: it inspects both tables, correctly identifies the join key fix, but then gets stuck trying invalid DSL syntax for three consecutive turns and never recovers. The RL stage trades that caution for directness. The binary reward signal reinforces whatever leads to correct submissions fastest, and inspection doesn't get additional reward to keep it around.</p>
+<p>Interestingly, the SFT-only model (trained on GPT-5-mini expert trajectories) takes a more methodical approach: it inspects both tables, correctly identifies the join key fix, but then gets stuck trying invalid DSL syntax for three consecutive turns and never recovers. The RL stage trades caution for directness. The binary reward signal only cares about correct submissions, so inspection drops out unless it actually helps.</p>
 
-<p>Here's a harder problem where the trained model has to iterate. The bug: a join matches <code>asset_id == part_id</code> instead of <code>part_id == part_id</code>, producing wrong rows.</p>
+<p>Here's a problem where the trained model has to iterate. The bug: a join matches <code>asset_id == part_id</code> instead of <code>part_id == part_id</code>, producing wrong rows.</p>
 
 <pre><code>asset_parts = load("asset_parts")
   |> select(part_id, asset_id)
@@ -422,15 +422,15 @@ dsl-debug eval --split intent_mismatch</code></pre>
     <li>Intent-mismatch: 7.9%. First significant result, but still low.</li>
 </ul>
 
-<p>1.5k trajectories is modest and probably the biggest limitation of this work. A continuation of this project would likely see better performance with 10x more trajectories, but my initial thinking was simulating an environment where these trajectories were created by a small amount of human experts. This was a somewhat arbitrary "design choice": you could easily craft a scenario where 10k trajectories come from mining user behavior in a proprietary system. Despite this lower amount of trajectories, SFT &rarr; RL did show that RL can build effectively on even a modest SFT warmup.</p>
+<p>1.5k trajectories is modest and probably the biggest limitation of this work. A continuation of this project would likely see better performance with 10x more trajectories, but my initial thinking was simulating an environment where these trajectories were created by a small number of human experts. This was a somewhat arbitrary "design choice": you could easily craft a scenario where 10k trajectories come from mining user behavior in a proprietary system. Despite this lower amount of trajectories, SFT &rarr; RL did show that RL can build effectively on even a modest SFT warmup.</p>
 
 <h2>GRPO: How It Works</h2>
 
-<p>The basic idea of on-policy RL: put the model in an environment, let it try things, reinforce what works, repeat. The main difference between algorithms is how they figure out the baseline, the calculation that says "did this attempt go better or worse than expected?" GRPO generates a batch of outcomes, and says "the ones in the group that did better than the group average should be more likely, and the ones that did worse should be less likely."</p>
+<p>The basic idea of on-policy RL: put the model in an environment, let it try things, reinforce what works, repeat. The main difference between algorithms is how they figure out the baseline, the calculation that says "did this attempt go better or worse than expected?" GRPO generates a batch of outcomes, scores them, and uses backpropagation to make the above-average responses more likely and the below-average ones less likely.</p>
 
-<p>In our case: for each debugging problem, the model makes 8 attempts. Some solve the bug, some don't. The update pushes the model toward what the successful attempts did differently from the failures. If all 8 succeed or all 8 fail, there's no contrast within the group, so that batch contributes nothing to learning. This is one of the major downsides of GRPO with binary rewards and long, multi-turn rollouts: sometimes the model is burning GPU time generating thousands of tokens and the entire batch is just thrown away.</p>
+<p>For each debugging problem, the model makes 8 attempts. The update pushes the model toward what the successful attempts did differently from the failures. If all 8 succeed or all 8 fail, there's no contrast, so the batch contributes nothing to learning. This is a major downside of GRPO with binary rewards: sometimes the model burns GPU time generating thousands of tokens that get thrown away.</p>
 
-<p>With reward shaping, partial credit will create variance in the reward signal that pushes gradients, even if all final answers are wrong. Though a common pitfall here is that without careful tuning, the model may learn that getting partial credit is the winning strategy and start to optimize for that at the expense of getting complete correct answers. I chose to stick with binary rewards to remove training variance so I could focus on other aspects of the training.</p>
+<p>With reward shaping, partial credit creates variance in the reward signal that pushes gradients, even if all final answers are wrong. Though a common pitfall here is that without careful tuning, the model may learn that getting partial credit is the winning strategy and start to optimize for that at the expense of getting complete correct answers. I chose to stick with binary rewards to remove training variance so I could focus on other aspects of the training.</p>
 
 <p>Here's the full GRPO objective from the <a href="https://arxiv.org/abs/2402.03300" target="_blank">DeepSeek-Math paper</a>, followed by a simplified version below:</p>
 
@@ -452,13 +452,13 @@ $$J_{\text{GRPO}}(\theta) = \mathbb{E}\Bigg[ \frac{1}{G} \sum_{i=1}^{G} \frac{1}
     <li>$\beta\, D_{KL}(\pi_\theta \| \pi_{ref})$: KL penalty that keeps the model close to a reference policy (usually the base model)</li>
 </ul>
 
-<p>We can simplify this equation to make it easier to understand. I dropped the KL penalty ($\beta = 0$) for this project. Pulling out the clip/min (which just cap how far the policy can move in one step) for clarity, the core of what GRPO computes is:</p>
+<p>In practice, the clip/min and probability ratio are inherited from PPO but don't play a significant role in standard GRPO (which generates fresh rollouts each step rather than reusing old ones). I also dropped the KL penalty ($\beta = 0$). Stripping those out, the core of what GRPO computes is: for each token in each rollout, nudge the model's probability by the advantage.</p>
 
 <p style="text-align: center; margin: 1.5rem 0;">
-$$J(\theta) = \mathbb{E}\Bigg[ \frac{1}{G} \sum_{i=1}^{G} \frac{1}{|o_i|} \sum_{t=1}^{|o_i|} \underbrace{\color{#5B9BD5}{\frac{\pi_\theta(o_{i,t} \mid q, o_{i,\lt t})}{\pi_{\theta_{old}}(o_{i,t} \mid q, o_{i,\lt t})}}}_{\color{#5B9BD5}{\text{probability ratio}}} \;\cdot\; \underbrace{\color{#ED7D31}{\hat{A}_{i,t}}}_{\color{#ED7D31}{\text{advantage}}} \Bigg]$$
+$$J(\theta) = \mathbb{E}\Bigg[ \frac{1}{G} \sum_{i=1}^{G} \frac{1}{|o_i|} \sum_{t=1}^{|o_i|} \log \underbrace{\color{#5B9BD5}{\pi_\theta(o_{i,t} \mid q, o_{i,\lt t})}}_{\color{#5B9BD5}{\text{model}}} \;\cdot\; \underbrace{\color{#ED7D31}{\hat{A}_{i,t}}}_{\color{#ED7D31}{\text{advantage}}} \Bigg]$$
 </p>
 
-<p>Two pieces multiplied together, averaged over tokens and rollouts. The <span style="color: #5B9BD5; font-weight: 600;">probability ratio</span> is the gradient signal: it measures how much more (or less) likely each token is under the current policy versus the policy that generated the rollout. The <span style="color: #ED7D31; font-weight: 600;">advantage</span> is what makes it group-relative: it says whether this rollout did better or worse than the others in its group.</p>
+<p>The <span style="color: #5B9BD5; font-weight: 600;">model</span> term is the probability the model assigns to each token it generated. The gradient increases this probability for tokens from successful rollouts and decreases it for tokens from failures. The <span style="color: #ED7D31; font-weight: 600;">advantage</span> scales how hard to push: it says whether this rollout did better or worse than the others in its group.</p>
 
 <p>The advantage is computed by normalizing rewards within each group:</p>
 
@@ -472,7 +472,7 @@ $$\color{#ED7D31}{\hat{A}_i = \frac{r_i - \text{mean}(\mathbf{r})}{\text{std}(\m
 
 <p>Note that verl starts with a default batch size of 16, which is very small compared to GRPO literature. A single bad step can easily lead to degenerate outputs that even high KL divergence penalty can't fix.</p>
 
-<p>Dropping KL removes the loss signal that is continually nudging the model back towards its base behaviors. For this experiment, I dropped it early on to minimize moving parts in the training, accepting that the base model may drift. The risk/reward calculation is that by allowing the model to drift farther from the base, it may be able to learn behaviors that would be held back by sticking too close to the base model. The risk is not just degeneration of base model abilities, but actual wasted training time if the model takes a step that starts degenerative outputs. With on-policy training, knocking the model away from good behavior will end a training run pretty fast.</p>
+<p>Dropping KL removes the loss signal that is continually nudging the model back towards its base behaviors. For this experiment, I dropped it early on to minimize moving parts in the training, accepting that the base model may drift. The risk/reward calculation is that by allowing the model to drift farther from the base, it may be able to learn behaviors that would be held back by sticking too close to the base model. The risk is not just degeneration of base model abilities, but actual wasted training time if the model takes a step that produces degenerate outputs. With on-policy training, knocking the model away from good behavior will end a training run pretty fast.</p>
 
 <p>In this setup, the benchmarks show that alignment tax was minimal and the model's capabilities didn't change much.</p>
 
@@ -601,9 +601,9 @@ $$\color{#ED7D31}{\hat{A}_i = \frac{r_i - \text{mean}(\mathbf{r})}{\text{std}(\m
 
 <img src="figures/training_dynamics.png" alt="Training dynamics: reward and entropy over steps" style="width: 100%; margin: 1.5rem 0;">
 
-<p>If you're used to supervised learning, the training curves for GRPO may look counterintuitive. PG loss goes up, but for GRPO we don't care about absolute loss, just that the gradients push the model toward better behavior. Training reward looks flat too, because the group filtering throws out all-positive and all-negative batches before the optimizer step. As the model learns, the all-positive groups grow and all-negatives shrink, but neither shows up in the reported reward. The validation accuracy curves above are the real signal.</p>
+<p>The training curves above look a little strange: the model is clearly doing better on held-out problems, but training reward is noisy with no upward trend and PG loss goes up. For GRPO we don't care about absolute loss, just that the gradients push the model toward better behavior. Training reward looks flat because the group filtering throws out all-positive and all-negative batches before the optimizer step. As the model learns, the all-positive groups grow and all-negatives shrink, but neither shows up in the reported reward. The validation accuracy curves are the real signal.</p>
 
-<p>Entropy declines gradually from 0.21 to 0.12 without collapsing, which is what you want to see. I initially set the entropy coefficient to 0.01, which caused entropy to explode to 4.0 within a few steps. The issue: at 0.01, the entropy bonus term in the loss dominates the policy gradient signal early in training. The model gets more reward from maximizing entropy (outputting near-uniform token distributions) than from actually solving problems. Dropping to 0.001 was enough to prevent premature collapse without overwhelming the reward signal.</p>
+<p>Entropy declines gradually from 0.21 to 0.12 without collapsing, meaning the model is acting more confident about its actions over time. I initially set the entropy coefficient to 0.01, which caused entropy to explode to 4.0 within a few steps. The issue: at 0.01, the entropy bonus term in the loss dominates the policy gradient signal early in training. The model gets more reward from maximizing entropy (outputting near-uniform token distributions) than from actually solving problems. Dropping to 0.001 was enough to prevent premature collapse without overwhelming the reward signal.</p>
 
 <h2>Training Infrastructure</h2>
 
@@ -618,8 +618,8 @@ $$\color{#ED7D31}{\hat{A}_i = \frac{r_i - \text{mean}(\mathbf{r})}{\text{std}(\m
 <h2>Limitations</h2>
 
 <ul>
-    <li><strong>Single model</strong>: All experiments use Qwen2.5-7B-Instruct. I chose Instruct over Coder because Qwen2.5-Coder <a href="https://github.com/QwenLM/Qwen3-Coder/issues/180" target="_blank">was not trained with tool-calling data</a>, making it unreliable for the multi-turn agent loop. I did not evaluate other model families. Results may differ at other scales.</li>
-    <li><strong>Synthetic environment</strong>: The DSL is designed for this experiment, not production code. Transfer to real-world debugging is untested.</li>
+    <li><strong>Single model</strong>: All experiments use Qwen2.5-7B-Instruct. I chose Instruct over Coder because Qwen2.5-Coder <a href="https://github.com/QwenLM/Qwen3-Coder/issues/180" target="_blank">was not trained with tool-calling data</a>. I accepted likely-lower coding abilities for stronger tool-calling behavior. I did not evaluate other model families. Results may differ at other scales.</li>
+    <li><strong>Synthetic environment</strong>: The DSL is designed for this experiment, not production code. Transfer to real-world debugging is untested. Generalized debugging behavior would likely require a much more diverse set of languages and bug types.</li>
     <li><strong>No curriculum learning</strong>: The training data mix is fixed. Progressive difficulty scheduling might help, particularly for intent-mismatch bugs.</li>
 </ul>
 
