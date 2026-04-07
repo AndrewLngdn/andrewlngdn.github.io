@@ -1,7 +1,7 @@
 ---
 layout: default
 title: "Multi-Turn RL for Code Debugging: Training a 7B Model on a Custom DSL with GRPO"
-description: "Comparing prompting, supervised fine-tuning, and reinforcement learning in a novel DSL debugging environment"
+description: "Comparing prompting, supervised fine-tuning, and reinforcement learning in a custom DSL debugging environment"
 og_image: /dsl_debugger/figures/results_bars.png
 og_image_alt: "Results table showing RL training improvements for DSL debugging agent"
 ---
@@ -168,9 +168,9 @@ og_image_alt: "Results table showing RL training improvements for DSL debugging 
 
 <h1>Multi-Turn RL for Code Debugging: Training a 7B Model on a Custom DSL with GRPO</h1>
 <p style="text-align: left; opacity: 0.6; font-size: 0.85rem; margin-top: 0; margin-bottom: 0.5rem;">March 2026</p>
-<p class="subtitle">Comparing prompting, supervised fine-tuning, and reinforcement learning in a novel DSL debugging environment</p>
+<p class="subtitle">Comparing prompting, supervised fine-tuning, and reinforcement learning in a custom DSL debugging environment</p>
 
-<p>Frontier model agents do well in unfamiliar environments: give them access to the right tools and docs, and they can iterate toward solving complex problems, even in out-of-distribution domains.</p>
+<p>Frontier model agents do well in unfamiliar environments: give them access to the right tools and docs, and they can iterate toward solving complex problems.</p>
 
 <p>Small, open-source models are trained toward this behavior as well, but generalization scales with model size, and an out-of-the-box 7B model can struggle with problems it hasn't seen during training.</p>
 
@@ -178,13 +178,12 @@ og_image_alt: "Results table showing RL training improvements for DSL debugging 
 
 <p>Most GRPO work focuses on single-turn RL, solving math problems or one-shot code generation. Here I wanted to reinforce agentic behaviors, where the model can choose to plan and iterate across multiple tool calls, learning what types of behavior lead to success.</p>
 
-<p>To do this, I built a custom domain-specific language (DSL) and interpreter for the model to debug. The DSL is a pipe-based dataflow language for querying tabular data, designed to be simple enough for a 7B model to learn but complex enough to require real debugging. The RL environment shows the model a bug in DSL code that it has never seen during training, and the model can choose to write and run code, inspect table schemas, read function documentation, and submit the final answer.</p>
+<p>To do this, I built a custom domain-specific language (DSL) and interpreter for the model to debug. The DSL is a pipe-based dataflow language for querying tabular data, simple enough for a 7B model to learn, but not trivially so. The RL environment shows the model a bug in DSL code that it has never seen during training, and the model can choose to write and run code, inspect table schemas, read function documentation, and submit the final answer.</p>
 
-<p>I trained Qwen 2.5 7B on two A100 GPUs using the verl framework, comparing prompting, SFT, GRPO, and SFT &rarr; RL on three categories of bugs: standard bugs (single mutations like a wrong column name), nonlocal bugs (where the root cause is upstream of where the error appears), and intent-mismatch bugs (where the code has multiple errors and doesn't match what the programmer intended). The best approach (SFT &rarr; RL) moved accuracy from 50.5% to 86.1% on standard bugs, 12.0% to 70.5% on nonlocal bugs, and 0.6% to 28.2% on intent-mismatch bugs. This post covers the environment, training setup, and results. The <a href="https://github.com/AndrewLngdn/dsl-debug" target="_blank">environment and benchmarks</a> are open-source, and <a href="https://huggingface.co/andrewlngdn/dsl-debug-7b-sft-rl" target="_blank">trained checkpoints</a> are on Hugging Face.</p>
+<p>I trained Qwen 2.5 7B on two A100 GPUs using the verl framework, comparing prompting, SFT, GRPO, and SFT &rarr; RL on three categories of bugs: standard bugs (single mutations like a wrong column name), nonlocal bugs (where the root cause is upstream of where the error appears), and intent-mismatch bugs (where the code has multiple errors and doesn't match what the programmer intended). The best approach (SFT &rarr; RL) moved accuracy from 50.5% to 86.1% on standard bugs, 12.0% to 70.5% on nonlocal bugs, and 0.6% to 28.2% on intent-mismatch bugs. The <a href="https://github.com/AndrewLngdn/dsl-debug" target="_blank">environment and benchmarks</a> are open-source, and <a href="https://huggingface.co/andrewlngdn/dsl-debug-7b-sft-rl" target="_blank">trained checkpoints</a> are on Hugging Face.</p>
 
 <img src="figures/results_bars.png" alt="Held-out test results bar chart" style="width: 100%; margin: 1.5rem 0;">
 
-<hr>
 <p>Here's an example of a problem the model learned to solve. The buggy code joins two tables and aggregates, but produces an empty table. Comparing the code with the expected output reveals four bugs: the join matches on the wrong key, the aggregation uses <code>max</code> instead of <code>min</code>, the sort is ascending instead of descending, and it returns 5 rows instead of 3.</p>
 
 <pre><code>document_sections = load("document_sections")
@@ -323,7 +322,6 @@ emit result</code></pre>
 
 <p>The base model inspects all the data but misdiagnoses the problem as duplicate rows and tries a DSL operation that doesn't exist. The trained model doesn't inspect at all. Instead it runs modified code repeatedly, using each failure to narrow down the fix. When turn 5 produces an error saying <code>asset_id</code> isn't in the <code>parts</code> table, it realizes the join key should be <code>part_id == part_id</code>, not <code>asset_id == part_id</code>.</p>
 
-<hr>
 
 <h2>Reproduction</h2>
 
@@ -342,7 +340,6 @@ dsl-debug eval --split standard
 dsl-debug eval --split nonlocal
 dsl-debug eval --split intent_mismatch</code></pre>
 
-<hr>
 
 <h2>The Environment</h2>
 
@@ -422,7 +419,7 @@ dsl-debug eval --split intent_mismatch</code></pre>
     <li>Intent-mismatch: 7.9%. First significant result, but still low.</li>
 </ul>
 
-<p>1.5k trajectories is modest and probably the biggest limitation of this work. A continuation of this project would likely see better performance with 10x more trajectories, but my initial thinking was simulating an environment where these trajectories were created by a small number of human experts. This was a somewhat arbitrary "design choice": you could easily craft a scenario where 10k trajectories come from mining user behavior in a proprietary system. Despite this lower amount of trajectories, SFT &rarr; RL did show that RL can build effectively on even a modest SFT warmup.</p>
+<p>1.5k trajectories is modest and probably the biggest limitation of this work. A continuation of this project would likely see better performance with 10x more trajectories, but my initial thinking was simulating an environment where these trajectories were created by a small number of human experts. This was a somewhat arbitrary "design choice": you could easily craft a scenario where 10k trajectories come from mining user behavior in a proprietary system. Despite this, SFT &rarr; RL did show that RL can build effectively on even a modest SFT warmup.</p>
 
 <h2>GRPO: How It Works</h2>
 
@@ -452,13 +449,13 @@ $$J_{\text{GRPO}}(\theta) = \mathbb{E}\Bigg[ \frac{1}{G} \sum_{i=1}^{G} \frac{1}
     <li>$\beta\, D_{KL}(\pi_\theta \| \pi_{ref})$: KL penalty that keeps the model close to a reference policy (usually the base model)</li>
 </ul>
 
-<p>In practice, the clip/min and probability ratio are inherited from PPO but don't play a significant role in standard GRPO (which generates fresh rollouts each step rather than reusing old ones). I also dropped the KL penalty ($\beta = 0$). Stripping those out, the core of what GRPO computes is: for each token in each rollout, nudge the model's probability by the advantage.</p>
+<p>In practice, the clip/min and probability ratio are inherited from PPO but don't play a significant role in standard GRPO (which generates fresh rollouts each step rather than reusing old ones). I also dropped the KL penalty ($\beta = 0$). Stripping those out, the core of what GRPO computes is: for each token in each rollout, adjust the model's probability by the advantage.</p>
 
 <p style="text-align: center; margin: 1.5rem 0;">
 $$J(\theta) = \mathbb{E}\Bigg[ \frac{1}{G} \sum_{i=1}^{G} \frac{1}{|o_i|} \sum_{t=1}^{|o_i|} \log \underbrace{\color{#5B9BD5}{\pi_\theta(o_{i,t} \mid q, o_{i,\lt t})}}_{\color{#5B9BD5}{\text{model}}} \;\cdot\; \underbrace{\color{#ED7D31}{\hat{A}_{i,t}}}_{\color{#ED7D31}{\text{advantage}}} \Bigg]$$
 </p>
 
-<p>The <span style="color: #5B9BD5; font-weight: 600;">model</span> term is the probability the model assigns to each token it generated. The gradient increases this probability for tokens from successful rollouts and decreases it for tokens from failures. The <span style="color: #ED7D31; font-weight: 600;">advantage</span> scales how hard to push: it says whether this rollout did better or worse than the others in its group.</p>
+<p>The <span style="color: #5B9BD5; font-weight: 600;">model</span> term is the probability the model assigns to each token it generated. The gradient increases this probability for tokens from successful rollouts and decreases it for tokens from failures. The <span style="color: #ED7D31; font-weight: 600;">advantage</span> determines the direction and magnitude: positive for rollouts that beat the group average, negative for those that didn't.</p>
 
 <p>The advantage is computed by normalizing rewards within each group:</p>
 
@@ -625,7 +622,7 @@ $$\color{#ED7D31}{\hat{A}_i = \frac{r_i - \text{mean}(\mathbf{r})}{\text{std}(\m
 
 <h2>Try It Yourself</h2>
 
-<p>RL results can be notoriously hard to reproduce. They're sensitive to hyperparameters, infrastructure versions, and subtle environment details. To make this as reproducible as possible, the entire training stack is packaged as a single Docker image with the environment, training configs, evaluation harness, and all dependencies baked in. You can go from a fresh GPU pod to a running training job in a few commands.</p>
+<p>RL results are notoriously hard to reproduce. They're sensitive to hyperparameters, infrastructure versions, and subtle environment details. To make this as reproducible as possible, the entire training stack is packaged as a single Docker image with the environment, training configs, evaluation harness, and all dependencies baked in. You can go from a fresh GPU pod to a running training job in a few commands.</p>
 
 <pre><code><span style="color: #6a737d;"># Full training reproduction on a 2xA100 pod</span>
 git clone https://github.com/AndrewLngdn/dsl-debug.git
@@ -649,7 +646,6 @@ python examples/evaluate_openai.py \
 
 <p>The repo includes 858 held-out test problems across three difficulty levels, a FastAPI server for language-agnostic access, and pre-trained checkpoints on Hugging Face.</p>
 
-<hr>
 
 <p style="margin-top: 2rem;">If you have questions or want to chat, reach out at <a href="mailto:andrewlngdn@gmail.com">andrewlngdn@gmail.com</a>. The <a href="https://github.com/AndrewLngdn/dsl-debug" target="_blank">environment and benchmarks</a> are on GitHub, and <a href="https://huggingface.co/andrewlngdn/dsl-debug-7b-sft-rl" target="_blank">trained checkpoints</a> are on Hugging Face.</p>
 
