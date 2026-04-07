@@ -1,0 +1,665 @@
+---
+layout: default
+title: "Multi-Turn RL for Code Debugging: Training a 7B Model on a Custom DSL with GRPO"
+description: "Comparing prompting, supervised fine-tuning, and reinforcement learning in a novel DSL debugging environment"
+og_image: /dsl_debugger/figures/results_bars.png
+og_image_alt: "Results table showing RL training improvements for DSL debugging agent"
+---
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+
+<style>
+    h1 {
+        text-align: left;
+        margin-bottom: 0.5rem;
+    }
+
+    h2 {
+        margin-top: 3rem;
+    }
+
+    h3 {
+        margin-top: 2rem;
+    }
+
+    hr {
+        border: none;
+        border-top: 1px solid #ddd;
+        margin: 2rem 0;
+    }
+
+    /* Code blocks */
+    pre {
+        background: #f6f8fa;
+        border: 1px solid #e1e4e8;
+        border-radius: 6px;
+        padding: 1rem;
+        overflow-x: auto;
+        font-size: 0.85rem;
+        line-height: 1.5;
+    }
+
+    code {
+        font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+        font-size: 0.85em;
+    }
+
+    p code, li code, td code {
+        background: #f6f8fa;
+        padding: 0.15em 0.35em;
+        border-radius: 3px;
+        font-size: 0.85em;
+    }
+
+    /* Tables */
+    table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 1.5rem 0;
+        font-size: 0.9rem;
+    }
+
+    th, td {
+        padding: 0.6rem 0.8rem;
+        text-align: left;
+        border-bottom: 1px solid #e1e4e8;
+    }
+
+    th {
+        font-weight: 600;
+        background: #f6f8fa;
+        border-bottom: 2px solid #d1d5da;
+    }
+
+    /* Rollout examples */
+    .rollout-comparison {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1rem;
+        margin: 1.5rem 0;
+    }
+
+    .rollout-box {
+        background: #f6f8fa;
+        border: 1px solid #e1e4e8;
+        border-radius: 6px;
+        padding: 1rem;
+        font-size: 0.82rem;
+    }
+
+    .rollout-box.wrong {
+        border-left: 3px solid #d73a49;
+    }
+
+    .rollout-box.correct {
+        border-left: 3px solid #28a745;
+    }
+
+    .rollout-box h4 {
+        margin: 0 0 0.75rem 0;
+        font-size: 0.85rem;
+        font-weight: 600;
+    }
+
+    .rollout-box .turn {
+        margin-bottom: 0.5rem;
+        font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+        line-height: 1.4;
+    }
+
+    .rollout-box .turn .label {
+        font-weight: 600;
+    }
+
+    .rollout-box .turn .result {
+        color: #586069;
+        padding-left: 1rem;
+        display: block;
+    }
+
+    .rollout-box .turn .comment {
+        color: #6a737d;
+        font-style: italic;
+        padding-left: 1rem;
+        display: block;
+    }
+
+    .rollout-box .verdict {
+        margin-top: 0.75rem;
+        font-weight: 600;
+    }
+
+    .rollout-box.wrong .verdict { color: #d73a49; }
+    .rollout-box.correct .verdict { color: #28a745; }
+
+    /* Lists */
+    ul, ol {
+        margin: 0 0 1rem 0;
+        padding-left: 1.5rem;
+    }
+
+    li {
+        margin-bottom: 0.35rem;
+    }
+
+    /* Subtitle */
+    .subtitle {
+        font-style: italic;
+        opacity: 0.8;
+        font-size: 0.95rem;
+        margin-bottom: 2rem;
+    }
+
+    /* Emphasis for results */
+    strong { font-weight: 600; }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+        .rollout-comparison {
+            grid-template-columns: 1fr;
+        }
+        pre { font-size: 0.8rem; }
+        table { font-size: 0.8rem; }
+        th, td { padding: 0.4rem 0.5rem; }
+    }
+</style>
+
+<h1>Multi-Turn RL for Code Debugging: Training a 7B Model on a Custom DSL with GRPO</h1>
+<p style="text-align: left; opacity: 0.6; font-size: 0.85rem; margin-top: 0; margin-bottom: 0.5rem;">March 2026</p>
+<p class="subtitle">Comparing prompting, supervised fine-tuning, and reinforcement learning in a novel DSL debugging environment</p>
+
+<p>Frontier model agents do well in unfamiliar environments: give them access to the right tools and docs, and they can iterate toward solving complex problems, even in out-of-distribution domains.</p>
+
+<p>Small, open-source models are trained toward this behavior as well, but generalization scales with model size, and an out-of-the-box 7B model can struggle with problems it hasn't seen during training.</p>
+
+<p>I wanted to explore adapting a small open-source model to an unseen coding environment, where the model has the ability to explore and run code while solving problems. Since there are many paths to the right solution, I chose reinforcement learning, specifically Group Relative Policy Optimization (GRPO) as part of the training regimen.</p>
+
+<p>Most GRPO work focuses on single-turn RL, solving math problems or one-shot code generation. Here I wanted to reinforce agentic behaviors, where the model can choose to plan and iterate across multiple tool calls, learning what types of behavior lead to success.</p>
+
+<p>To do this, I built a custom domain-specific language (DSL) and interpreter for the model to debug. The DSL is a pipe-based dataflow language for querying tabular data, designed to be simple enough for a 7B model to learn but complex enough to require real debugging. The RL environment shows the model a bug in DSL code that it has never seen during training, and the model can choose to write and run code, inspect table schemas, read function documentation, and submit the final answer.</p>
+
+<p>I trained Qwen 2.5 7B on two A100 GPUs using the verl framework, comparing prompting, SFT, GRPO, and SFT &rarr; RL on three categories of bugs: standard bugs (single mutations like a wrong column name), nonlocal bugs (where the root cause is upstream of where the error appears), and intent-mismatch bugs (where the code has multiple errors and doesn't match what the programmer intended). The best approach (SFT &rarr; RL) moved accuracy from 50.5% to 86.1% on standard bugs, 12.0% to 70.5% on nonlocal bugs, and 0.6% to 28.2% on intent-mismatch bugs. This post covers the environment, training setup, and results. The <a href="https://github.com/AndrewLngdn/dsl-debug" target="_blank">environment and benchmarks</a> are open-source, and <a href="https://huggingface.co/andrewlngdn/dsl-debug-7b-sft-rl" target="_blank">trained checkpoints</a> are on Hugging Face.</p>
+
+<img src="figures/results_bars.png" alt="Held-out test results bar chart" style="width: 100%; margin: 1.5rem 0;">
+
+<hr>
+<p>Here's an example of a problem the model learned to solve. The buggy code joins two tables and aggregates, but produces an empty table. Comparing the code with the expected output reveals four bugs: the join matches on the wrong key, the aggregation uses <code>max</code> instead of <code>min</code>, the sort is ascending instead of descending, and it returns 5 rows instead of 3.</p>
+
+<pre><code>document_sections = load("document_sections")
+summary = document_sections
+  |> group_by(document_code)
+  |> aggregate(max_section_sequence: max(section_sequence), count: count())
+
+documents = load("documents")
+enriched = join(summary, documents, on: document_code == document_structure_code)
+
+result = enriched
+  |> sort_by(count, asc)
+  |> take(5)
+
+emit result</code></pre>
+
+<p>Expected output: 3 rows with <code>min_section_sequence</code> (not max), sorted descending, joined on <code>document_code</code> (not <code>document_structure_code</code>).</p>
+
+<div class="rollout-comparison">
+    <div class="rollout-box wrong">
+        <h4>Base model (prompt-only), 4 turns</h4>
+        <div class="turn">
+            <span class="label">Turn 1:</span> run(buggy_code)
+            <span class="result">&rarr; (empty table)</span>
+        </div>
+        <div class="turn">
+            <span class="label">Turn 2:</span> inspect(summary)
+            <span class="result">&rarr; Sees document_code values (714, 217, 675...)</span>
+        </div>
+        <div class="turn">
+            <span class="label">Turn 3:</span> inspect(documents)
+            <span class="result">&rarr; Sees document_structure_code values (1&ndash;9)</span>
+            <span class="comment">"This mismatch suggests the join condition is not finding matches"</span>
+        </div>
+        <div class="turn">
+            <span class="label">Turn 4:</span> submit(unchanged code)
+            <span class="result">&rarr; Submits original buggy code</span>
+        </div>
+        <p class="verdict">&cross; Wrong. Diagnosed the issue but couldn't fix it.</p>
+    </div>
+
+    <div class="rollout-box correct">
+        <h4>SFT&rarr;RL model, 3 turns</h4>
+        <div class="turn">
+            <span class="label">Turn 1:</span> run(buggy_code)
+            <span class="result">&rarr; (empty table)</span>
+        </div>
+        <div class="turn">
+            <span class="label">Turn 2:</span> run(fixed_code)
+            <span class="comment">"The expected output includes document_type_code, access_count, so the join should be on document_code"</span>
+            <span class="result">&rarr; Fixes join key, max&rarr;min, asc&rarr;desc, take(5)&rarr;take(3) in one step</span>
+            <span class="result">&rarr; Output: 3 rows &check;</span>
+        </div>
+        <div class="turn">
+            <span class="label">Turn 3:</span> submit(fixed_code)
+        </div>
+        <p class="verdict">&check; Correct. Fixed all four bugs at once.</p>
+    </div>
+</div>
+
+<p>The base model correctly identifies the join key mismatch but can't determine the correct fix, and submits the unchanged code. The trained model uses the expected output, infers what the program was supposed to do, and fixes all four bugs in a single step.</p>
+
+<p>Interestingly, the SFT-only model (trained on GPT-5-mini expert trajectories) takes a more methodical approach: it inspects both tables, correctly identifies the join key fix, but then gets stuck trying invalid DSL syntax for three consecutive turns and never recovers. The RL stage trades that caution for directness. The binary reward signal reinforces whatever leads to correct submissions fastest, and inspection doesn't get additional reward to keep it around.</p>
+
+<p>Here's a harder problem where the trained model has to iterate. The bug: a join matches <code>asset_id == part_id</code> instead of <code>part_id == part_id</code>, producing wrong rows.</p>
+
+<pre><code>asset_parts = load("asset_parts")
+  |> select(part_id, asset_id)
+
+parts = load("parts")
+enriched = join(asset_parts, parts, on: asset_id == part_id)
+
+result = enriched
+  |> sort_by(asset_id, desc)
+  |> take(5)
+
+emit result</code></pre>
+
+<div class="rollout-comparison">
+    <div class="rollout-box wrong">
+        <h4>Base model (prompt-only), 5 turns</h4>
+        <div class="turn">
+            <span class="label">Turn 1:</span> run(buggy_code)
+            <span class="result">&rarr; Wrong rows (asset_id = 3, 3, 2... instead of 15, 15, 14...)</span>
+        </div>
+        <div class="turn">
+            <span class="label">Turn 2:</span> inspect(enriched)
+            <span class="comment">"The join is not filtering out duplicate rows"</span>
+        </div>
+        <div class="turn">
+            <span class="label">Turns 3-4:</span> inspect(asset_parts), inspect(parts)
+            <span class="comment">Inspects both tables, sees the data, concludes it needs deduplication</span>
+        </div>
+        <div class="turn">
+            <span class="label">Turn 5:</span> submit(code with |> distinct)
+            <span class="result">&rarr; Error: "Unknown pipe operation: distinct"</span>
+        </div>
+        <p class="verdict">&cross; Wrong. Misdiagnosed the problem as duplicates, tried a nonexistent DSL operation.</p>
+    </div>
+
+    <div class="rollout-box correct">
+        <h4>SFT&rarr;RL model, 7 turns</h4>
+        <div class="turn">
+            <span class="label">Turn 1:</span> run(buggy_code)
+            <span class="result">&rarr; Wrong rows (asset_id = 3 instead of 15)</span>
+        </div>
+        <div class="turn">
+            <span class="label">Turn 2:</span> run(join on: part_id == asset_id)
+            <span class="comment">"The expected output suggests the join should be on part_id == asset_id"</span>
+            <span class="result">&rarr; Empty table. Hypothesis rejected.</span>
+        </div>
+        <div class="turn">
+            <span class="label">Turn 3:</span> run(different select + join)
+            <span class="result">&rarr; Still empty. Wrong direction.</span>
+        </div>
+        <div class="turn">
+            <span class="label">Turn 4:</span> run(back to asset_id == part_id, different select)
+            <span class="comment">"The expected rows should have asset_id values 15, 14, 10, 6 and 14"</span>
+            <span class="result">&rarr; Same wrong rows (asset_id = 3)</span>
+        </div>
+        <div class="turn">
+            <span class="label">Turn 5:</span> run(sort by part_id instead)
+            <span class="result">&rarr; Error: column 'asset_id' not found in parts table</span>
+            <span class="comment">"asset_id is not available in the parts table... we want to match part_id from asset_parts to part_id from parts"</span>
+        </div>
+        <div class="turn">
+            <span class="label">Turn 6:</span> run(join on: part_id == part_id)
+            <span class="result">&rarr; Correct rows! (asset_id = 15, 15, 14, 10, 6)</span>
+        </div>
+        <div class="turn">
+            <span class="label">Turn 7:</span> submit
+        </div>
+        <p class="verdict">&check; Correct. Took 6 attempts, used errors as information.</p>
+    </div>
+</div>
+
+<p>The base model inspects all the data but misdiagnoses the problem as duplicate rows and tries a DSL operation that doesn't exist. The trained model doesn't inspect at all. Instead it runs modified code repeatedly, using each failure to narrow down the fix. When turn 5 produces an error saying <code>asset_id</code> isn't in the <code>parts</code> table, it realizes the join key should be <code>part_id == part_id</code>, not <code>asset_id == part_id</code>.</p>
+
+<hr>
+
+<h2>Reproduction</h2>
+
+<p>All training, evaluation, and inference are available and reproducible in a Docker container, along with a script that finds the cheapest training machine on Vast, loads the container onto it, and allows for easy SSH access:</p>
+
+<pre><code><span style="color: #6a737d;"># Host machine</span>
+bash scripts/vast.sh create          <span style="color: #6a737d;"># cheapest 2xA100 (~$2.50/hr)</span>
+bash scripts/vast.sh ssh
+
+<span style="color: #6a737d;"># Inside container</span>
+dsl-debug setup sft
+dsl-debug train sft-rl
+
+dsl-debug sglang /workspace/models/my_model
+dsl-debug eval --split standard
+dsl-debug eval --split nonlocal
+dsl-debug eval --split intent_mismatch</code></pre>
+
+<hr>
+
+<h2>The Environment</h2>
+
+<p>The DSL is a pipe-based language with SQL-like semantics for data exploration (<code>filter</code>, <code>select</code>, <code>group_by</code>, <code>join</code>, etc.). Programs query truncated, real-world databases from the <a href="https://yale-lily.github.io/spider" target="_blank">Spider</a> SQL benchmark. Part of the dataset consists of programmatically-generated correct programs which were stochastically degraded. The rest of the programs were written and degraded using GPT-5-mini via the OpenAI API.</p>
+
+<p>The interpreter runs through a regex-based parser, a topological sort of the dependency graph, and an execution engine that simulates the data sources in-memory.</p>
+
+<p>The environment provides four tools:</p>
+
+<ul>
+    <li><strong><code>run(code)</code></strong>: Execute a DSL program and return its output (or error)</li>
+    <li><strong><code>inspect(table)</code></strong>: Show the first few rows of an intermediate table</li>
+    <li><strong><code>read_docs(topic)</code></strong>: Look up DSL function documentation</li>
+    <li><strong><code>submit(code)</code></strong>: Submit a fix. Returns correct/incorrect. <strong>Terminates the episode.</strong></li>
+</ul>
+
+<p>Each RL episode shows the model some buggy DSL code and the expected output. The model gets 8 turns to investigate and solve the bug, with the goal of passing the working DSL code to the <code>submit</code> tool.</p>
+
+<h3>Reward Design</h3>
+
+<p>If the model's code returns the same rows as the correct implementation, the environment assigns a reward of 1, and assigns a reward of 0 in all other cases. I experimented a bit with partial credit (e.g., fraction of rows matching) but ultimately stuck with binary rewards for this iteration of the project.</p>
+
+<h3>Three Bug Categories</h3>
+
+<p>The bugs fall into three categories:</p>
+
+<table>
+    <thead>
+        <tr>
+            <th>Category</th>
+            <th>What's Wrong</th>
+            <th>Example</th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td><strong>Standard</strong></td>
+            <td>Single mutation (wrong column, operator, value)</td>
+            <td><code>filter(name == "MURASS")</code> should be <code>"MURASSO"</code></td>
+        </tr>
+        <tr>
+            <td><strong>Nonlocal</strong></td>
+            <td>Bug in upstream stage affects downstream output</td>
+            <td>Wrong <code>group_by</code> column 3 lines before the error appears</td>
+        </tr>
+        <tr>
+            <td><strong>Intent-mismatch</strong></td>
+            <td>Program logic doesn't match stated intent (2&ndash;3 errors)</td>
+            <td>Code computes sum but expected output shows average</td>
+        </tr>
+    </tbody>
+</table>
+
+<p>Standard bugs can usually be solved just by diffing the buggy output against the expected output; larger models tend to spot these issues instantly, but smaller models need to explore to get to the solution. Nonlocal bugs are harder because part of the solution requires tracing backwards through the pipeline to find where things actually went wrong. Intent-mismatch bugs are the hardest: the code doesn't do the right thing, but it's not obvious what the programmer meant, so the model has to figure out the intent from context.</p>
+
+<h2>Data Pipeline</h2>
+
+<p>The DSL operates over rows sampled from databases from the <a href="https://yale-lily.github.io/spider" target="_blank">Spider</a> SQL benchmark. Training data for RL consists of 6,420 blended problems (standard + nonlocal + intent-mismatch), skewed toward medium and hard examples to provide more learning signal on difficult problems. For SFT, I generated 1,593 expert trajectories by placing GPT-5-mini in the same training environment and recording its exploration (95.5% solve rate). Only successful trajectories were kept.</p>
+
+<p>No database schemas are shared between train, validation, and test sets (or between SFT and RL), to reduce the chance of overfitting and memorization.</p>
+
+<h2>Methods</h2>
+
+<h3>Prompt Engineering Baseline</h3>
+
+<p>I tested five system prompts on base Qwen2.5-7B-Instruct. The best was a concise expert persona ("You are an expert DSL debugger..."), which included some hints about common bug pitfalls. The best prompt achieved 50.5% on standard bugs in the held-out test set. CoT and verbose prompts hurt performance on this specific setup. It's possible that the model got confused by the overly detailed instructions. I didn't spend much effort here because testing prompt engineering wasn't my focus for this project.</p>
+
+<p>Intent-mismatch accuracy was 0.6% across all prompts.</p>
+
+<h3>Supervised Fine-Tuning</h3>
+
+<p>The model was fine-tuned on 1,593 expert trajectories: full parameter updates, LR=5&times;10<sup>&minus;6</sup>, 2 epochs. Validation performance started to flatten around step 100 (of 198).</p>
+
+<ul>
+    <li>Standard: 56.3% (+5.8pp over prompting)</li>
+    <li>Nonlocal: 40.0% (+28pp). SFT learns upstream tracing from teacher demonstrations.</li>
+    <li>Intent-mismatch: 7.9%. First significant result, but still low.</li>
+</ul>
+
+<p>1.5k trajectories is modest and probably the biggest limitation of this work. A continuation of this project would likely see better performance with 10x more trajectories, but my initial thinking was simulating an environment where these trajectories were created by a small amount of human experts. This was a somewhat arbitrary "design choice": you could easily craft a scenario where 10k trajectories come from mining user behavior in a proprietary system. Despite this lower amount of trajectories, SFT &rarr; RL did show that RL can build effectively on even a modest SFT warmup.</p>
+
+<h2>GRPO: How It Works</h2>
+
+<p>The basic idea of on-policy RL: put the model in an environment, let it try things, reinforce what works, repeat. The main difference between algorithms is how they figure out the baseline, the calculation that says "did this attempt go better or worse than expected?" GRPO generates a batch of outcomes, and says "the ones in the group that did better than the group average should be more likely, and the ones that did worse should be less likely."</p>
+
+<p>In our case: for each debugging problem, the model makes 8 attempts. Some solve the bug, some don't. The update pushes the model toward what the successful attempts did differently from the failures. If all 8 succeed or all 8 fail, there's no contrast within the group, so that batch contributes nothing to learning. This is one of the major downsides of GRPO with binary rewards and long, multi-turn rollouts: sometimes the model is burning GPU time generating thousands of tokens and the entire batch is just thrown away.</p>
+
+<p>With reward shaping, partial credit will create variance in the reward signal that pushes gradients, even if all final answers are wrong. Though a common pitfall here is that without careful tuning, the model may learn that getting partial credit is the winning strategy and start to optimize for that at the expense of getting complete correct answers. I chose to stick with binary rewards to remove training variance so I could focus on other aspects of the training.</p>
+
+<p>Here's the full GRPO objective from the <a href="https://arxiv.org/abs/2402.03300" target="_blank">DeepSeek-Math paper</a>, followed by a simplified version below:</p>
+
+<p style="text-align: center; margin: 1.5rem -5rem; overflow: visible;">
+$$J_{\text{GRPO}}(\theta) = \mathbb{E}\Bigg[ \frac{1}{G} \sum_{i=1}^{G} \frac{1}{|o_i|} \sum_{t=1}^{|o_i|} \min\!\Bigg( \frac{\pi_\theta(o_{i,t} \mid q, o_{i,\lt t})}{\pi_{\theta_{old}}(o_{i,t} \mid q, o_{i,\lt t})} \hat{A}_{i,t} ,\; \text{clip}\Big(\frac{\pi_\theta(o_{i,t} \mid q, o_{i,\lt t})}{\pi_{\theta_{old}}(o_{i,t} \mid q, o_{i,\lt t})},\, 1\!-\!\varepsilon,\, 1\!+\!\varepsilon\Big) \hat{A}_{i,t} \Bigg) - \beta\, D_{KL}\!\big(\pi_\theta \,\|\, \pi_{ref}\big) \Bigg]$$
+</p>
+
+<p>Where:</p>
+
+<ul>
+    <li>$q$: the input prompt (a buggy DSL program + expected output)</li>
+    <li>$o_i$: the $i$-th rollout (the model's full multi-turn response, reasoning + tool calls)</li>
+    <li>$G$: number of rollouts per prompt (8 in our setup)</li>
+    <li>$o_{i,t}$: the $t$-th token of rollout $i$</li>
+    <li>$\frac{\pi_\theta(o_{i,t} \mid q, o_{i,\lt t})}{\pi_{\theta_{old}}(o_{i,t} \mid q, o_{i,\lt t})}$: the <strong>probability ratio</strong>. How much more (or less) likely is this token under the updated model vs. the model that generated the rollout? This is the gradient signal.</li>
+    <li>$\hat{A}_{i,t}$: the <strong>group-relative advantage</strong>. Did this rollout do better or worse than the group average?</li>
+    <li>$\text{clip}(\cdot, 1\!-\!\varepsilon, 1\!+\!\varepsilon)$: PPO-style clipping that prevents the policy from changing too much in a single step</li>
+    <li>$\min(\cdot, \cdot)$: takes the more conservative of the clipped and unclipped objectives</li>
+    <li>$\beta\, D_{KL}(\pi_\theta \| \pi_{ref})$: KL penalty that keeps the model close to a reference policy (usually the base model)</li>
+</ul>
+
+<p>We can simplify this equation to make it easier to understand. I dropped the KL penalty ($\beta = 0$) for this project. Pulling out the clip/min (which just cap how far the policy can move in one step) for clarity, the core of what GRPO computes is:</p>
+
+<p style="text-align: center; margin: 1.5rem 0;">
+$$J(\theta) = \mathbb{E}\Bigg[ \frac{1}{G} \sum_{i=1}^{G} \frac{1}{|o_i|} \sum_{t=1}^{|o_i|} \underbrace{\color{#5B9BD5}{\frac{\pi_\theta(o_{i,t} \mid q, o_{i,\lt t})}{\pi_{\theta_{old}}(o_{i,t} \mid q, o_{i,\lt t})}}}_{\color{#5B9BD5}{\text{probability ratio}}} \;\cdot\; \underbrace{\color{#ED7D31}{\hat{A}_{i,t}}}_{\color{#ED7D31}{\text{advantage}}} \Bigg]$$
+</p>
+
+<p>Two pieces multiplied together, averaged over tokens and rollouts. The <span style="color: #5B9BD5; font-weight: 600;">probability ratio</span> is the gradient signal: it measures how much more (or less) likely each token is under the current policy versus the policy that generated the rollout. The <span style="color: #ED7D31; font-weight: 600;">advantage</span> is what makes it group-relative: it says whether this rollout did better or worse than the others in its group.</p>
+
+<p>The advantage is computed by normalizing rewards within each group:</p>
+
+<p style="text-align: center; margin: 1rem 0;">
+$$\color{#ED7D31}{\hat{A}_i = \frac{r_i - \text{mean}(\mathbf{r})}{\text{std}(\mathbf{r})}}$$
+</p>
+
+<p>With binary rewards (1 for correct, 0 for wrong), if 3 out of 8 rollouts solve the bug, the successes get advantage $+0.625$ and failures get $-0.375$. The update pushes the model toward what the successful rollouts did differently. If all 8 succeed or all 8 fail, $\text{std}(\mathbf{r}) = 0$ and the group contributes no gradient. There's nothing to compare.</p>
+
+<p>I wanted to use the resampling approach from DAPO/DR-GRPO to handle zero-variance groups, but the PR for it in verl was stale. I chose to just reject groups without variance, and because roughly 50% of the rollouts were either all-correct or all-wrong, accumulating batches of 512 led to an effective batch size closer to my target of 256.</p>
+
+<p>Note that verl starts with a default batch size of 16, which is very small compared to GRPO literature. A single bad step can easily lead to degenerate outputs that even high KL divergence penalty can't fix.</p>
+
+<p>Dropping KL removes the loss signal that is continually nudging the model back towards its base behaviors. For this experiment, I dropped it early on to minimize moving parts in the training, accepting that the base model may drift. The risk/reward calculation is that by allowing the model to drift farther from the base, it may be able to learn behaviors that would be held back by sticking too close to the base model. The risk is not just degeneration of base model abilities, but actual wasted training time if the model takes a step that starts degenerative outputs. With on-policy training, knocking the model away from good behavior will end a training run pretty fast.</p>
+
+<p>In this setup, the benchmarks show that alignment tax was minimal and the model's capabilities didn't change much.</p>
+
+<h3>RL with GRPO</h3>
+
+<p>Key training hyperparameters: LR=1&times;10<sup>&minus;5</sup> with cosine schedule, 40 training steps, batch size of 512 prompts with 8 rollouts each, no KL divergence penalty.</p>
+
+<p>RL-only results:</p>
+<ul>
+    <li>Standard: 78.8% (+28pp over prompting)</li>
+    <li>Nonlocal: 54.0% (+42pp)</li>
+    <li>Intent-mismatch: 14.7%</li>
+</ul>
+
+<p>RL performed reasonably well without priming the model via SFT. Qwen 2.5 7B has good agentic and multi-turn capabilities, it just needed a bit of fine-tuning to adapt to this specific new environment.</p>
+
+<h3>SFT then RL</h3>
+
+<p>GRPO starting from the SFT step 100 checkpoint instead of the base model. All hyperparameters identical to RL-only for fair comparison.</p>
+
+<ul>
+    <li>Standard: <strong>86.1%</strong> (+36pp over prompting)</li>
+    <li>Nonlocal: <strong>70.5%</strong> (+59pp over prompting)</li>
+    <li>Intent-mismatch: <strong>28.2%</strong> (+28pp over prompting)</li>
+</ul>
+
+<p>SFT then RL beats RL-only on everything.</p>
+
+<h2>Results</h2>
+
+<h3>Final Test Results</h3>
+
+<p>These are one-shot evaluations on a held-out test set that was never used for model selection.</p>
+
+<table>
+    <thead>
+        <tr>
+            <th>Method</th>
+            <th>Standard (481)</th>
+            <th>Nonlocal (200)</th>
+            <th>Intent-Mis (177)</th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td>Prompt Engineering</td>
+            <td>50.5%</td>
+            <td>12.0%</td>
+            <td>0.6%</td>
+        </tr>
+        <tr>
+            <td>SFT</td>
+            <td>56.3%</td>
+            <td>40.0%</td>
+            <td>7.9%</td>
+        </tr>
+        <tr>
+            <td>RL-only (GRPO)</td>
+            <td>78.8%</td>
+            <td>54.0%</td>
+            <td>14.7%</td>
+        </tr>
+        <tr style="font-weight: 600;">
+            <td>SFT then RL</td>
+            <td>86.1%</td>
+            <td>70.5%</td>
+            <td>28.2%</td>
+        </tr>
+    </tbody>
+</table>
+
+<h3>Where It Still Fails</h3>
+
+<p>The best model still misses ~14% of standard bugs and 72% of intent-mismatch bugs. Looking at the difficulty breakdown, easy bugs are mostly solved (93%+), but hard standard bugs are around 52%. The failures tend to involve complex joins or cases where multiple columns have plausible alternative values, making it hard to narrow down the mutation from output alone.</p>
+
+<p>Intent-mismatch is a different story. At 28%, the model has clearly learned <em>something</em> about reasoning over programmer intent, but it still fails on most of these. Many intent-mismatch bugs require noticing that the code computes a related-but-wrong quantity (sum instead of average, count instead of distinct count), which requires understanding the semantics of the expected output rather than just pattern-matching against it.</p>
+
+<h3>Learning Curves</h3>
+
+<img src="figures/learning_curves.png" alt="Learning curves showing RL-only vs SFT→RL over training steps" style="width: 100%; margin: 1.5rem 0;">
+
+<p>SFT &rarr; RL starts higher (SFT provides a better initialization) and climbs faster on all three metrics. On nonlocal bugs, RL-only plateaus around 52% while SFT then RL reaches 65%. On intent-mismatch, RL-only never exceeds 11% while SFT then RL reaches 27%. Both methods plateau around step 30-35. Further training would likely require fresh data or curriculum changes.</p>
+
+<p>Note that these are validation set numbers used for model selection. The final test results in the table above were evaluated once on a held-out test set after model selection was complete.</p>
+
+<h3>Alignment Tax</h3>
+
+<table>
+    <thead>
+        <tr>
+            <th>Benchmark</th>
+            <th>Base</th>
+            <th>SFT</th>
+            <th>RL-only</th>
+            <th>SFT then RL</th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td>MMLU (5-shot)</td>
+            <td>74.6%</td>
+            <td>74.6%</td>
+            <td>74.7%</td>
+            <td>74.5%</td>
+        </tr>
+        <tr>
+            <td>GSM8K (8-shot)</td>
+            <td>84.9%</td>
+            <td>83.9%</td>
+            <td>84.4%</td>
+            <td>84.1%</td>
+        </tr>
+        <tr>
+            <td>HumanEval (0-shot)</td>
+            <td>65.9%</td>
+            <td>62.2%</td>
+            <td>59.1%</td>
+            <td>62.2%</td>
+        </tr>
+    </tbody>
+</table>
+
+<p>MMLU and GSM8K show negligible degradation. HumanEval is most sensitive: RL-only loses 6.8pp, while SFT and SFT then RL lose 3.7pp. Training didn't use a KL divergence penalty or data mixing, so these numbers represent the worst case.</p>
+
+<h3>Training Dynamics</h3>
+
+<img src="figures/training_dynamics.png" alt="Training dynamics: reward and entropy over steps" style="width: 100%; margin: 1.5rem 0;">
+
+<p>If you're used to supervised learning, the training curves for GRPO may look counterintuitive. PG loss goes up, but for GRPO we don't care about absolute loss, just that the gradients push the model toward better behavior. Training reward looks flat too, because the group filtering throws out all-positive and all-negative batches before the optimizer step. As the model learns, the all-positive groups grow and all-negatives shrink, but neither shows up in the reported reward. The validation accuracy curves above are the real signal.</p>
+
+<p>Entropy declines gradually from 0.21 to 0.12 without collapsing, which is what you want to see. I initially set the entropy coefficient to 0.01, which caused entropy to explode to 4.0 within a few steps. The issue: at 0.01, the entropy bonus term in the loss dominates the policy gradient signal early in training. The model gets more reward from maximizing entropy (outputting near-uniform token distributions) than from actually solving problems. Dropping to 0.001 was enough to prevent premature collapse without overwhelming the reward signal.</p>
+
+<h2>Training Infrastructure</h2>
+
+<p>All training ran on a single multi-GPU Vast.ai instance (2&times;A100-SXM4-80GB, ~$2/hr).</p>
+
+<p><strong>Distributed training.</strong> The stack is verl 0.7 + sglang 0.5.6 on PyTorch 2.9. During GRPO, sglang generates rollouts in server mode with tensor parallelism across both GPUs. verl handles training with FSDP2 (full-shard data parallelism), CPU parameter offload, and optimizer offload. This combination fits 7B training in 160GB of total VRAM.</p>
+
+<p><strong>Monkey-patches to verl.</strong> I'm a big fan of verl and it handles quite a lot of grungy infra training chores, but I did make some small patches. The main one was DAPO-inspired zero-variance group filtering in the advantage computation.</p>
+
+<p><strong>Decoupled evaluation.</strong> I chose to run training and validation separately rather than inline. Verl's validation was slow due to the long multi-turn rollouts and the validation settings didn't saturate the GPUs because it was keeping training weights in memory. It was significantly faster to train for a few steps and then evaluate with sglang's highly-optimized inference engine.</p>
+
+<h2>Limitations</h2>
+
+<ul>
+    <li><strong>Single model</strong>: All experiments use Qwen2.5-7B-Instruct. I chose Instruct over Coder because Qwen2.5-Coder <a href="https://github.com/QwenLM/Qwen3-Coder/issues/180" target="_blank">was not trained with tool-calling data</a>, making it unreliable for the multi-turn agent loop. I did not evaluate other model families. Results may differ at other scales.</li>
+    <li><strong>Synthetic environment</strong>: The DSL is designed for this experiment, not production code. Transfer to real-world debugging is untested.</li>
+    <li><strong>No curriculum learning</strong>: The training data mix is fixed. Progressive difficulty scheduling might help, particularly for intent-mismatch bugs.</li>
+</ul>
+
+<h2>Try It Yourself</h2>
+
+<p>RL results can be notoriously hard to reproduce. They're sensitive to hyperparameters, infrastructure versions, and subtle environment details. To make this as reproducible as possible, the entire training stack is packaged as a single Docker image with the environment, training configs, evaluation harness, and all dependencies baked in. You can go from a fresh GPU pod to a running training job in a few commands.</p>
+
+<pre><code><span style="color: #6a737d;"># Full training reproduction on a 2xA100 pod</span>
+git clone https://github.com/AndrewLngdn/dsl-debug.git
+cd dsl-debug
+bash scripts/vast.sh create       <span style="color: #6a737d;"># rent a 2xA100 (~$2.50/hr)</span>
+bash scripts/vast.sh ssh
+dsl-debug setup sft && dsl-debug train sft          <span style="color: #6a737d;"># SFT warmup (~1.5 hrs)</span>
+dsl-debug train sft-rl --model /workspace/checkpoints/global_step_100  <span style="color: #6a737d;"># GRPO (~12 hrs)</span></code></pre>
+
+<p>The core environment package has zero external dependencies (just Python stdlib) and can also be used standalone:</p>
+
+<pre><code>pip install -e .
+python examples/quickstart.py     <span style="color: #6a737d;"># run a single debugging episode</span>
+
+<span style="color: #6a737d;"># Evaluate any OpenAI-compatible model on the benchmark</span>
+pip install -e ".[eval]"
+python examples/evaluate_openai.py \
+    --model your-model \
+    --base-url http://localhost:8000/v1 \
+    --split standard</code></pre>
+
+<p>The repo includes 858 held-out test problems across three difficulty levels, a FastAPI server for language-agnostic access, and pre-trained checkpoints on Hugging Face.</p>
+
+<hr>
+
+<p style="margin-top: 2rem;">If you have questions or want to chat, reach out at <a href="mailto:andrewlngdn@gmail.com">andrewlngdn@gmail.com</a>. The <a href="https://github.com/AndrewLngdn/dsl-debug" target="_blank">environment and benchmarks</a> are on GitHub, and <a href="https://huggingface.co/andrewlngdn/dsl-debug-7b-sft-rl" target="_blank">trained checkpoints</a> are on Hugging Face.</p>
+
+<script>
+    document.addEventListener("DOMContentLoaded", function() {
+        renderMathInElement(document.body, {
+            delimiters: [
+                {left: '$$', right: '$$', display: true},
+                {left: '$', right: '$', display: false}
+            ]
+        });
+    });
+</script>

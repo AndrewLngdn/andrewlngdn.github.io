@@ -4,55 +4,34 @@ title: Home
 ---
 
 <style>
-    .project-list {
-        margin-top: 3rem;
+    .post-item {
+        margin-bottom: 2rem;
     }
 
-    .project-card {
-        background: #fff;
-        border: 1px solid #ddd;
-        border-radius: 8px;
-        padding: 1.5rem;
-        margin-bottom: 1.5rem;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-        transition: transform 0.2s, box-shadow 0.2s;
-    }
-
-    .project-card:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-    }
-
-    .project-card h2 {
-        margin-top: 0;
-    }
-
-    .project-card .date {
+    .post-item .date {
         opacity: 0.6;
         font-size: 0.85rem;
+    }
+
+    .post-item h2 {
+        margin: 0.25rem 0 0.5rem 0;
+    }
+
+    .post-item p {
         margin-bottom: 0.5rem;
-    }
-
-    .project-card p {
-        margin-bottom: 1rem;
-    }
-
-    .project-card a.read-more {
-        font-weight: 500;
     }
 </style>
 
-<h1>Andrew Langdon</h1>
-<p>Machine learning visualizations and explorations.</p>
+<div class="post-item">
+    <div class="date">March 2026</div>
+    <h2><a href="/dsl_debugger/">Multi-Turn RL for Code Debugging</a></h2>
+    <p>Training a 7B model to debug code in a custom DSL environment using GRPO. Comparing prompting, supervised fine-tuning, and reinforcement learning across three categories of bugs.</p>
+</div>
 
-<div class="project-list">
-    <article class="project-card">
-        <div class="date">November 3, 2025</div>
-        <h2><a href="/adam_scaling/">Visualizing Adam's adaptive learning rates</a></h2>
-        <p>If you've trained a machine learning model in the past, there's a good chance you've optimized with Adam. A big reason for Adam's success is that it determines individual learning rates for each model parameter, making large updates when confident, and small updates when uncertain.</p>
-        <p>This interactive visualization shows how Adam adapts its step sizes in response to different gradient patterns.</p>
-        <a href="/adam_scaling/" class="read-more">View visualization →</a>
-    </article>
+<div class="post-item">
+    <div class="date">November 2025</div>
+    <h2><a href="/adam_scaling/">Visualizing Adam's adaptive learning rates</a></h2>
+    <p>An interactive visualization showing how Adam adapts its step sizes in response to different gradient patterns.</p>
 </div>
 
 <footer style="margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #ddd;">
