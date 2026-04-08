@@ -463,7 +463,7 @@ $$J(\theta) = \mathbb{E}\Bigg[ \frac{1}{G} \sum_{i=1}^{G} \frac{1}{|o_i|} \sum_{
 $$\color{#ED7D31}{\hat{A}_i = \frac{r_i - \text{mean}(\mathbf{r})}{\text{std}(\mathbf{r})}}$$
 </p>
 
-<p>With binary rewards (1 for correct, 0 for wrong), if 3 out of 8 rollouts solve the bug, the successes get advantage $+0.625$ and failures get $-0.375$. The update pushes the model toward what the successful rollouts did differently. If all 8 succeed or all 8 fail, $\text{std}(\mathbf{r}) = 0$ and the group contributes no gradient. There's nothing to compare.</p>
+<p>With binary rewards (1 for correct, 0 for wrong), if 3 out of 8 rollouts solve the bug, the successes get advantage $\approx +1.29$ and failures get $\approx -0.77$. The update pushes the model toward what the successful rollouts did differently. If all 8 succeed or all 8 fail, $\text{std}(\mathbf{r}) = 0$ and the group contributes no gradient. There's nothing to compare.</p>
 
 <p>I wanted to use the resampling approach from DAPO/DR-GRPO to handle zero-variance groups, but the PR for it in verl was stale. I chose to just reject groups without variance, and because roughly 50% of the rollouts were either all-correct or all-wrong, accumulating batches of 512 led to an effective batch size closer to my target of 256.</p>
 
