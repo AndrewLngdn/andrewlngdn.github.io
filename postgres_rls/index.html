@@ -1,0 +1,212 @@
+---
+layout: default
+title: "Safer multi-tenancy with Postgres's row-level security"
+description: "How Postgres row-level security catches tenant data leaks in multi-tenant apps when application code forgets to scope a query."
+---
+
+<style>
+    /* Code blocks */
+    pre {
+        background: #f5f5f5;
+        padding: 1rem;
+        border-radius: 4px;
+        overflow-x: auto;
+        font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
+        font-size: 0.875rem;
+        line-height: 1.5;
+        margin: 0 0 1rem 0;
+    }
+
+    pre code {
+        background: none;
+        padding: 0;
+        font-family: inherit;
+        font-size: inherit;
+    }
+
+    /* Inline code */
+    code {
+        background: #f5f5f5;
+        padding: 0.125rem 0.375rem;
+        border-radius: 3px;
+        font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
+        font-size: 0.875em;
+    }
+
+    /* Tables */
+    table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 1.5rem 0;
+        font-size: 0.9rem;
+    }
+
+    th, td {
+        text-align: left;
+        padding: 0.75rem;
+        border: 1px solid #ddd;
+        vertical-align: top;
+    }
+
+    th {
+        background: #f5f5f5;
+        font-weight: 600;
+    }
+
+    /* Lists */
+    ul, ol {
+        margin: 0 0 1rem 0;
+        padding-left: 1.5rem;
+    }
+
+    li {
+        margin-bottom: 0.5rem;
+    }
+
+    /* Post date */
+    .post-date {
+        opacity: 0.6;
+        font-size: 0.85rem;
+        margin-top: 0;
+        margin-bottom: 1.5rem;
+    }
+</style>
+
+<h1>Safer multi-tenancy with Postgres's row-level security</h1>
+<p class="post-date">May 16, 2026</p>
+
+<p>There are roughly three ways to isolate tenant data in a multi-tenant app:</p>
+
+<table>
+    <thead>
+        <tr>
+            <th>Approach</th>
+            <th>Isolation</th>
+            <th>Scaling</th>
+            <th>Typical fit</th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td>Database per tenant</td>
+            <td>DB-enforced</td>
+            <td>Each DB adds synchronization overhead and can get tricky at high DB count</td>
+            <td>Sensitive contracts (finance, healthcare, defense)</td>
+        </tr>
+        <tr>
+            <td>Schema per tenant</td>
+            <td>Namespace-only by default. Can be DB-enforced with a role per tenant</td>
+            <td>Single DB, but per-schema operations multiply (migrations, role provisioning, catalog growth)</td>
+            <td>Per-tenant schema customization</td>
+        </tr>
+        <tr>
+            <td>Multi-tenant tables with tenant_id</td>
+            <td>App-enforced. Requires scoping every query</td>
+            <td>Single DB, but tenants share table resources (indexes, cache, autovacuum)</td>
+            <td>Most multi-tenant applications</td>
+        </tr>
+    </tbody>
+</table>
+
+<p>Out of these three, the multi-tenant tables approach gives the strongest scaling and least operational overhead, but it carries a higher risk of leaking tenant data because it relies on perfect behavior in application code. Postgres's <a href="https://www.postgresql.org/docs/current/ddl-rowsecurity.html">row-level security</a> (RLS) lets us mitigate some of that risk while keeping complexity low.</p>
+
+<p>An early attempt at enforcing query scoping might look like this, a thin wrapper that takes the tenant id as an argument:</p>
+
+<pre><code>def get_documents(conn, tenant_id):
+    return conn.execute(
+        "SELECT * FROM documents WHERE tenant_id = $1",
+        tenant_id,
+    )
+</code></pre>
+
+<p>This works as long as every database call goes through a scoped function. But code constantly changes and evolves. Later, someone adds a search function and forgets the scope:</p>
+
+<pre><code>def search_documents(conn, tenant_id, query):
+    return conn.execute(
+        "SELECT * FROM documents WHERE content ILIKE $1",
+        f"%{query}%",
+    )
+</code></pre>
+
+<p>A tenant searching for "invoice" now sees everyone's invoices.</p>
+
+<p>Automated testing and code review usually catch this, but not 100% of the time.</p>
+
+<h2>How does row-level security help?</h2>
+
+<p>Enabling RLS pushes the scope check from application code into the database, enforced on every query.</p>
+
+<p>Here's the SQL:</p>
+
+<pre><code>-- Migration: enable RLS and write the policy
+ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY documents_owner ON documents
+    USING (tenant_id = current_setting('app.current_tenant_id')::uuid);
+</code></pre>
+
+<ul>
+    <li><code>USING (...)</code>: a boolean expression Postgres evaluates per row. Only rows where it's TRUE are visible to queries.</li>
+    <li><a href="https://www.postgresql.org/docs/current/functions-admin.html#FUNCTIONS-ADMIN-SET"><code>current_setting('app.current_tenant_id')</code></a>: reads a custom configuration parameter that the app sets per request. The name (<code>app.current_tenant_id</code>) is arbitrary, but Postgres requires the dot-form <code>x.y</code>.</li>
+</ul>
+
+<p>Running the buggy <code>search_documents</code> from earlier raises an error:</p>
+
+<pre><code>ERROR: unrecognized configuration parameter "app.current_tenant_id"
+</code></pre>
+
+<p>Forgetting to set the tenant_id is an explicit failure. Postgres's error message is a bit confusing: it seems to be implying that our policy was created wrong, but it really means our code tried to query <code>documents</code> without setting <code>app.current_tenant_id</code>.</p>
+
+<p>Here's one way to set this up in middleware. We can use <a href="https://www.postgresql.org/docs/current/functions-admin.html#FUNCTIONS-ADMIN-SET"><code>set_config()</code></a> with its third argument <code>true</code> and pass in the <code>tenant_id</code> to set <code>app.current_tenant_id</code>:</p>
+
+<pre><code>from contextlib import asynccontextmanager
+
+# Middleware: set the tenant per request, scoped to the transaction
+@asynccontextmanager
+async def tenant_scope(tenant_id):
+    async with engine.begin() as conn:
+        await conn.execute(
+            text("SELECT set_config('app.current_tenant_id', :tid, true)"),
+            {"tid": str(tenant_id)},
+        )
+        yield conn
+</code></pre>
+
+<p>The middleware sets the tenant_id and yields the connection. Anything that runs on it inherits the context.</p>
+
+<pre><code>async def search_endpoint(tenant_id, query):
+    async with tenant_scope(tenant_id) as conn:
+        return await search_documents(conn, tenant_id, query)
+</code></pre>
+
+<p>When <code>search_documents</code> runs on <code>conn</code>, Postgres adds the tenant filter to the query. The function returns only the current tenant's rows.</p>
+
+<h2>What RLS doesn't do</h2>
+
+<p>RLS is a consistency check, not an authentication check. It enforces that every row touched matches whatever <code>tenant_id</code> is set in the session, but it doesn't verify that you set the right one. If your auth middleware pulls the wrong claim from a JWT, or grabs a <code>tenant_id</code> from a URL parameter (don't do this) instead of the session, RLS will return that wrong tenant's rows.</p>
+
+<h2>Pitfalls</h2>
+
+<ul>
+    <li>Superusers and roles with the <a href="https://www.postgresql.org/docs/current/sql-createrole.html"><code>BYPASSRLS</code></a> attribute always bypass RLS.</li>
+    <li>Table owners bypass their own policies by default, unless the table is created with <a href="https://www.postgresql.org/docs/current/sql-altertable.html"><code>ALTER TABLE ... FORCE ROW LEVEL SECURITY</code></a>.</li>
+</ul>
+
+<p>A setup that avoids these is creating one role for migrations and a least-privileges role that the application uses.</p>
+
+<p>Views execute with the owner's RLS by default, but can be configured to use the caller's RLS with <code>WITH (security_invoker = true)</code>.</p>
+
+<p>RLS adds overhead, usually negligible, but it can compound with complex policies or at scale.</p>
+
+<h2>Outro</h2>
+
+<p>RLS is one of my favorite features because it catches errors early. Fixing a bug locally is orders of magnitude cheaper than handling a production failure. It's a small investment that pays dividends!</p>
+
+<p>If you'd like to talk through your own setup, reach out: <a href="mailto:andrewlngdn@gmail.com">andrewlngdn@gmail.com</a></p>
+
+<h2>References</h2>
+
+<ul>
+    <li><a href="https://www.postgresql.org/docs/current/ddl-rowsecurity.html">PostgreSQL: Row Security Policies</a></li>
+    <li><a href="https://www.postgresql.org/docs/current/sql-createrole.html">PostgreSQL: <code>CREATE ROLE</code></a></li>
+</ul>
